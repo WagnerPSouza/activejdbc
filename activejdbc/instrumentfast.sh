@@ -2,7 +2,7 @@
 
 ## This script will instrument fast without Maven
 ## Adjust versions on the classpath if upgrading!
-export JAVALITE=2.3.1-SNAPSHOT
+export JAVALITE=2.3.1-j8-SNAPSHOT
 
 export M2_REPO=~/.m2/repository
 
