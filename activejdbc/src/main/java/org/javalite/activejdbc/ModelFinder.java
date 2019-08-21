@@ -24,22 +24,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
-import javassist.CannotCompileException;
-import javassist.ClassPool;
-import javassist.CtClass;
-import javassist.Modifier;
-import javassist.NotFoundException;
-import javassist.bytecode.AnnotationsAttribute;
-import javassist.bytecode.ConstPool;
-import javassist.bytecode.annotation.Annotation;
-import javassist.bytecode.annotation.StringMemberValue;
-
-import org.h2.util.StringUtils;
-import org.javalite.activejdbc.annotations.DbName;
-import org.javalite.activejdbc.annotations.IdGenerator;
-import org.javalite.activejdbc.annotations.IdName;
-import org.javalite.activejdbc.annotations.Table;
-import org.javalite.activejdbc.annotations.VersionColumn;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

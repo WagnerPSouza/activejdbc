@@ -15,7 +15,24 @@ limitations under the License.
 */
 package org.javalite.activejdbc;
 
-import org.h2.util.StringUtils;
+import static org.javalite.common.Util.closeQuietly;
+import static org.javalite.common.Util.split;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+
+import org.javalite.activejdbc.annotations.BelongsTo;
 import org.javalite.activejdbc.annotations.Cached;
 import org.javalite.activejdbc.annotations.DbName;
 import org.javalite.activejdbc.annotations.IdGenerator;
@@ -23,16 +40,17 @@ import org.javalite.activejdbc.annotations.IdName;
 import org.javalite.activejdbc.annotations.Table;
 import org.javalite.activejdbc.annotations.VersionColumn;
 import org.javalite.activejdbc.cache.CacheManager;
-import org.javalite.activejdbc.dialects.*;
+import org.javalite.activejdbc.dialects.DefaultDialect;
+import org.javalite.activejdbc.dialects.Dialect;
+import org.javalite.activejdbc.dialects.H2Dialect;
+import org.javalite.activejdbc.dialects.MSSQLDialect;
+import org.javalite.activejdbc.dialects.MySQLDialect;
+import org.javalite.activejdbc.dialects.OracleDialect;
+import org.javalite.activejdbc.dialects.PostgreSQLDialect;
+import org.javalite.activejdbc.dialects.SQLiteDialect;
+import org.javalite.common.Convert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.URL;
-import java.util.*;
 
 import javassist.CannotCompileException;
 import javassist.ClassPool;
@@ -44,12 +62,8 @@ import javassist.NotFoundException;
 import javassist.bytecode.AnnotationsAttribute;
 import javassist.bytecode.ConstPool;
 import javassist.bytecode.annotation.Annotation;
+import javassist.bytecode.annotation.ClassMemberValue;
 import javassist.bytecode.annotation.StringMemberValue;
-
-import org.javalite.common.Collections;
-import org.javalite.common.Convert;
-
-import static org.javalite.common.Util.*;
 
 /**
  * @author Igor Polevoy
@@ -63,11 +77,12 @@ public class Configuration {
     	private String versionColumn;
     	private String dbName = DB.DEFAULT_NAME;
     	private Boolean cached;
+    	private String parentClass;
+    	private String foreignKeyName;
     	
     	public ModelAttributes() {
     		
     	}
-    	
     	
     	
     	public ModelAttributes(String dbName, String tableName, Boolean cached,
@@ -104,7 +119,22 @@ public class Configuration {
 			this.idColumn = idColumn;
 		}
 
-		public String getTableName() {
+		public ModelAttributes(String dbName, String tableName, String idColumn, String idGeneratorCode, String versionColumn,
+                Boolean cached, String parentClass, String foreignKeyName) {
+            super();
+            this.tableName = tableName;
+            this.idColumn = idColumn;
+            this.idGeneratorCode = idGeneratorCode;
+            this.versionColumn = versionColumn;
+            this.dbName = dbName;
+            this.cached = cached;
+            this.parentClass = parentClass;
+            this.foreignKeyName = foreignKeyName;
+        }
+
+
+
+        public String getTableName() {
 			return tableName;
 		}
 		public String getIdColumn() {
@@ -122,7 +152,14 @@ public class Configuration {
 		public Boolean getCached() {
 			return cached;
 		}
-    	
+
+        public String getParentClass() {
+            return parentClass;
+        }
+
+        public String getForeignKeyName() {
+            return foreignKeyName;
+        }
     	
     }
 	//key is a DB name, value is a list of model names
@@ -283,49 +320,57 @@ public class Configuration {
     		
     		//***set annotations
     		ConstPool constPool = subClass.getClassFile().getConstPool();
+    		
     		AnnotationsAttribute attr = new AnnotationsAttribute(constPool, AnnotationsAttribute.visibleTag);
-    		subClass.getClassFile().addAttribute(attr);
-    		Annotation anno = null;
+            subClass.getClassFile().addAttribute(attr);
     		
     		//db name annotation
     		if(!StringUtils.isNullOrEmpty(attribs.dbName)) {
-	    		anno = new Annotation(constPool, pool.get(DbName.class.getName()));
+    		    Annotation anno = new Annotation(constPool, pool.get(DbName.class.getName()));
 	    		anno.addMemberValue("value", new StringMemberValue(attribs.dbName, constPool));
-	    		attr.setAnnotation(anno);
+	    		attr.addAnnotation(anno);
     		}
     		
     		//table name annotation
     		if(!StringUtils.isNullOrEmpty(attribs.tableName)) {
-	    		anno = new Annotation(constPool, pool.get(Table.class.getName()));
+    		    Annotation anno = new Annotation(constPool, pool.get(Table.class.getName()));
 	    		anno.addMemberValue("value", new StringMemberValue(attribs.tableName, constPool));
-	    		attr.setAnnotation(anno);
+	    		attr.addAnnotation(anno);
     		}
     		
     		//id column annotation
     		if(!StringUtils.isNullOrEmpty(attribs.idColumn)) {
-	    		anno = new Annotation(constPool, pool.get(IdName.class.getName()));
+    		    Annotation anno = new Annotation(constPool, pool.get(IdName.class.getName()));
 	    		anno.addMemberValue("value", new StringMemberValue(attribs.idColumn, constPool));
-	    		attr.setAnnotation(anno);
+	    		attr.addAnnotation(anno);
     		}
     		
     		//id generator code annotation
     		if(!StringUtils.isNullOrEmpty(attribs.idGeneratorCode)) {
-	    		anno = new Annotation(constPool, pool.get(IdGenerator.class.getName()));
+    		    Annotation anno = new Annotation(constPool, pool.get(IdGenerator.class.getName()));
 	    		anno.addMemberValue("value", new StringMemberValue(attribs.idGeneratorCode, constPool));
-	    		attr.setAnnotation(anno);
+	    		attr.addAnnotation(anno);
     		}
     		
     		//version column annotation
     		if(!StringUtils.isNullOrEmpty(attribs.versionColumn)) {
-	    		anno = new Annotation(constPool, pool.get(VersionColumn.class.getName()));
+    		    Annotation anno = new Annotation(constPool, pool.get(VersionColumn.class.getName()));
 	    		anno.addMemberValue("value", new StringMemberValue(attribs.versionColumn, constPool));
-	    		attr.setAnnotation(anno);
+	    		attr.addAnnotation(anno);
     		}
+    		//@BelongsTo(parent = ParametrosGerais.class, foreignKeyName = "parametros_gerais_id")
+    		//@BelongsTo
+    		if(!StringUtils.isNullOrEmpty(attribs.parentClass)) {
+    		    Annotation anno = new Annotation(constPool, pool.get(BelongsTo.class.getName()));
+                anno.addMemberValue("parent", new ClassMemberValue(attribs.parentClass, constPool));
+                anno.addMemberValue("foreignKeyName", new StringMemberValue(attribs.foreignKeyName, constPool));
+                attr.addAnnotation(anno);
+            }
     		
     		//cached annotation
     		if(attribs.cached != null && attribs.cached == true) {
-	    		anno = new Annotation(constPool, pool.get(Cached.class.getName()));
-	    		attr.setAnnotation(anno);
+    		    Annotation anno = new Annotation(constPool, pool.get(Cached.class.getName()));
+	    		attr.addAnnotation(anno);
     		}
     		
     		
@@ -338,8 +383,8 @@ public class Configuration {
     		constr.setModifiers(Modifier.PUBLIC);
     		subClass.addConstructor(constr);
     		
-    		 
-			return subClass.toClass();
+    		subClass.defrost();
+			return subClass.toClass(pool.getClass().getClassLoader(), pool.getClass().getProtectionDomain());
     	} catch (CannotCompileException ex) {
     		throw new RuntimeException(ex);
     	} catch (NotFoundException ex) {
