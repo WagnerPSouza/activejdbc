@@ -110,6 +110,10 @@ public enum Registry {
 
         return metaModels.getMetaModel(modelClass);
     }
+    
+    public void registryModel(Class<? extends Model> modelClass) {
+        ModelFinder.registryModel(modelClass);
+    }
 
     ModelRegistry modelRegistryOf(Class<? extends Model> modelClass) {
         return metaModels.getModelRegistry(modelClass);
@@ -126,25 +130,7 @@ public enum Registry {
         if (staticMetadataStatus != STATIC_METADATA_CHECKED && loadStaticMetadata()) return;
 
         try {
-            Connection c = ConnectionsAccess.getConnection(dbName);
-            if(c == null){
-                throw new DBException("Failed to retrieve metadata from DB, connection: '" + dbName + "' is not available");
-            }
-            DatabaseMetaData databaseMetaData = c.getMetaData();
-            String dbType = c.getMetaData().getDatabaseProductName();
-            Set<Class<? extends Model>> modelClasses = ModelFinder.getModelsForDb(dbName);
-            registerModels(dbName, modelClasses, dbType);
-            String[] tables = metaModels.getTableNames(dbName);
-
-            for (String table : tables) {
-                Map<String, ColumnMetadata> metaParams = fetchMetaParams(databaseMetaData, dbType, table);
-                registerColumnMetadata(table, metaParams);
-            }
-
-            for (String table : tables) {
-                discoverAssociationsFor(table, dbName);
-            }
-            processOverrides(modelClasses);
+            initModelConfiguration(dbName);
         } catch (Exception e) {
             initedDbs.remove(dbName);
             if (e instanceof InitException) {
@@ -156,6 +142,25 @@ public enum Registry {
                 throw new InitException(e);
             }
         }
+    }
+    
+    public synchronized void initModelConfiguration(String dbName) throws SQLException, ClassNotFoundException {
+        Connection c = ConnectionsAccess.getConnection(dbName);
+        DatabaseMetaData databaseMetaData = c.getMetaData();
+        String dbType = c.getMetaData().getDatabaseProductName();
+        Set<Class<? extends Model>> modelClasses = ModelFinder.getModelsForDb(dbName);
+        registerModels(dbName, modelClasses, dbType);
+        String[] tables = metaModels.getTableNames(dbName);
+
+        for (String table : tables) {
+            Map<String, ColumnMetadata> metaParams = fetchMetaParams(databaseMetaData, dbType, table);
+            registerColumnMetadata(table, metaParams);
+        }
+
+        for (String table : tables) {
+            discoverAssociationsFor(table, dbName);
+        }
+        processOverrides(modelClasses);
     }
 
     private boolean loadStaticMetadata() {

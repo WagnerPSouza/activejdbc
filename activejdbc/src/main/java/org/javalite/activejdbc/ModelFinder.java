@@ -15,6 +15,13 @@ limitations under the License.
 */
 package org.javalite.activejdbc;
 
+import java.io.IOException;
+import java.net.URL;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 import org.javalite.activejdbc.logging.LogFilter;
 import org.javalite.activejdbc.logging.LogLevel;
@@ -22,43 +29,50 @@ import org.javalite.common.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URL;
-import java.util.*;
-
 public class ModelFinder {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ModelFinder.class);
 
-    //key is a DB name, value is a list of model names
-    private static Map<String, Set<String>> modelMap;
+    // key is a DB name, value is a list of model names
+    private static Map<String, Set<String>> modelMap = new HashMap<>();
+    private static Boolean initModel = Boolean.FALSE;
 
     private static synchronized Map<String, Set<String>> getModelMap() {
-        if (modelMap == null) {
+        if (!initModel) {
             try {
-                modelMap = new HashMap<>();
-                Enumeration<URL> urls = Registry.instance().getClass().getClassLoader().getResources(Registry.instance().getModelFile());
-                while(urls.hasMoreElements()) {
+                Enumeration<URL> urls = Registry.instance().getClass().getClassLoader()
+                        .getResources(Registry.instance().getModelFile());
+                while (urls.hasMoreElements()) {
                     URL url = urls.nextElement();
                     LogFilter.log(LOGGER, LogLevel.INFO, "Loading models from: {}", url.toExternalForm());
                     String modelsFile = Util.read(url.openStream());
                     String[] lines = Util.split(modelsFile, System.getProperty("line.separator"));
-                    for(String line : lines) {
+                    for (String line : lines) {
                         String[] parts = Util.split(line, ':');
                         String modelName = parts[0];
                         String dbName = parts[1];
                         Set<String> modelNames = modelMap.computeIfAbsent(dbName, k -> new HashSet<>());
                         if (!modelNames.add(modelName)) {
-                            throw new InitException(String.format("Model '{}' already exists for database '{}'", modelName, dbName));
+                            throw new InitException(
+                                    String.format("Model '{}' already exists for database '{}'", modelName, dbName));
                         }
                     }
                 }
-
-            } catch(IOException e) {
+                initModel = Boolean.TRUE;
+            } catch (IOException e) {
                 throw new InitException(e);
             }
         }
         return modelMap;
+    }
+
+    public static synchronized void registryModel(Class<? extends Model> model) {
+        String dbName = MetaModel.getDbName(model);
+        String modelName = model.getName();
+        Set<String> modelNames = modelMap.computeIfAbsent(dbName, k -> new HashSet<>());
+        if (!modelNames.add(modelName)) {
+            throw new InitException(String.format("Model '{}' already exists for database '{}'", modelName, dbName));
+        }
     }
 
 //    protected static Set<String> getModelsForDb(String dbName) throws ClassNotFoundException {
@@ -81,17 +95,18 @@ public class ModelFinder {
                     if (realDbName.equals(dbName)) {
                         classSet.add(modelClass);
                     } else {
-                        throw new InitException("invalid database association for the " + className + ". Real database name: " + realDbName);
+                        throw new InitException("invalid database association for the " + className
+                                + ". Real database name: " + realDbName);
                     }
                 } else {
                     throw new InitException("invalid class in the models list: " + className);
                 }
             }
         }
-        if (classSet.isEmpty()){
-            throw new InitException("you are trying to work with models, but no models are found. Maybe you have " +
-                    "no models in project, or you did not instrument the models. It is expected that you have " +
-                    "a file activejdbc_models.properties on classpath");
+        if (classSet.isEmpty()) {
+            throw new InitException("you are trying to work with models, but no models are found. Maybe you have "
+                    + "no models in project, or you did not instrument the models. It is expected that you have "
+                    + "a file activejdbc_models.properties on classpath");
         }
         return classSet;
     }
