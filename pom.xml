@@ -150,6 +150,7 @@
         <module>git-info-maven-plugin</module>
         <module>app-config</module>
         <module>activejdbc-static-metadata-test</module>
+        <module>activejdcb-dynamic</module>
     </modules>
 
     <dependencyManagement>

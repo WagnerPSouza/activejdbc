@@ -15,8 +15,32 @@ limitations under the License.
 */
 package org.javalite.activejdbc;
 
-import org.javalite.activejdbc.annotations.*;
-import org.javalite.activejdbc.associations.*;
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.net.URL;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.javalite.activejdbc.annotations.BelongsTo;
+import org.javalite.activejdbc.annotations.BelongsToParents;
+import org.javalite.activejdbc.annotations.BelongsToPolymorphic;
+import org.javalite.activejdbc.annotations.HasMany;
+import org.javalite.activejdbc.annotations.Many2Manies;
+import org.javalite.activejdbc.annotations.Many2Many;
+import org.javalite.activejdbc.annotations.UnrelatedTo;
+import org.javalite.activejdbc.associations.BelongsToAssociation;
+import org.javalite.activejdbc.associations.BelongsToPolymorphicAssociation;
+import org.javalite.activejdbc.associations.Many2ManyAssociation;
+import org.javalite.activejdbc.associations.OneToManyAssociation;
+import org.javalite.activejdbc.associations.OneToManyPolymorphicAssociation;
 import org.javalite.activejdbc.cache.CacheManager;
 import org.javalite.activejdbc.cache.QueryCache;
 import org.javalite.activejdbc.logging.LogFilter;
@@ -27,23 +51,13 @@ import org.javalite.common.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.lang.reflect.Method;
-import java.net.URL;
-import java.sql.Connection;
-import java.sql.DatabaseMetaData;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.*;
-
-
 /**
  * @author Igor Polevoy
  * @author Eric Nielsen
  */
 public enum Registry {
 
-    //our singleton!
+    // our singleton!
     INSTANCE;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Registry.class);
@@ -69,7 +83,8 @@ public enum Registry {
      */
     @Deprecated
     public boolean initialized() {
-        // This will return true if AT LEAST ONE DB was initialized, not if ALL were (if there are more than one).
+        // This will return true if AT LEAST ONE DB was initialized, not if ALL were (if
+        // there are more than one).
         // Hopefully this is not used anywhere.
         return !initedDbs.isEmpty();
     }
@@ -80,16 +95,17 @@ public enum Registry {
 
     public StatisticsQueue getStatisticsQueue() {
         if (statisticsQueue == null) {
-            throw new InitException("cannot collect statistics if this was not configured in activejdbc.properties file. Add 'collectStatistics = true' to it.");
+            throw new InitException(
+                    "cannot collect statistics if this was not configured in activejdbc.properties file. Add 'collectStatistics = true' to it.");
         }
         return statisticsQueue;
     }
 
-    public Configuration getConfiguration(){
+    public Configuration getConfiguration() {
         return configuration;
     }
 
-    public static CacheManager cacheManager(){
+    public static CacheManager cacheManager() {
         return QueryCache.instance().getCacheManager();
     }
 
@@ -110,7 +126,7 @@ public enum Registry {
 
         return metaModels.getMetaModel(modelClass);
     }
-    
+
     public void registryModel(Class<? extends Model> modelClass) {
         ModelFinder.registryModel(modelClass);
     }
@@ -127,7 +143,8 @@ public enum Registry {
             initedDbs.add(dbName);
         }
 
-        if (staticMetadataStatus != STATIC_METADATA_CHECKED && loadStaticMetadata()) return;
+        if (staticMetadataStatus != STATIC_METADATA_CHECKED && loadStaticMetadata())
+            return;
 
         try {
             initModelConfiguration(dbName);
@@ -143,7 +160,23 @@ public enum Registry {
             }
         }
     }
-    
+
+    public synchronized List<String> getAllTables(String dbName) throws SQLException {
+
+        List<String> tables = new ArrayList<>();
+        Connection c = ConnectionsAccess.getConnection(dbName);
+        DatabaseMetaData databaseMetaData = c.getMetaData();
+        //String schema = databaseMetaData.getConnection().getSchema();
+       // String catalog = databaseMetaData.getConnection().getCatalog();
+        String[] types = {"TABLE"};
+        ResultSet rs = databaseMetaData.getTables(null, null, "%", types);
+        while (rs.next()) {
+            tables.add(rs.getString(3));
+        }
+
+        return tables;
+    }
+
     public synchronized void initModelConfiguration(String dbName) throws SQLException, ClassNotFoundException {
         Connection c = ConnectionsAccess.getConnection(dbName);
         DatabaseMetaData databaseMetaData = c.getMetaData();
@@ -165,20 +198,21 @@ public enum Registry {
 
     private boolean loadStaticMetadata() {
         try {
-            Enumeration<URL> urls = Registry.instance().getClass().getClassLoader().getResources("activejdbc_metadata.json");
+            Enumeration<URL> urls = Registry.instance().getClass().getClassLoader()
+                    .getResources("activejdbc_metadata.json");
             staticMetadataStatus = urls.hasMoreElements() ? STATIC_METADATA_LOADED : STATIC_METADATA_CHECKED;
-            while(urls.hasMoreElements()) {
+            while (urls.hasMoreElements()) {
                 URL url = urls.nextElement();
                 LogFilter.log(LOGGER, LogLevel.INFO, "Loading metadata from: {}", url.toExternalForm());
                 metaModels.fromJSON(Util.read(url.openStream()));
             }
             return staticMetadataStatus == STATIC_METADATA_LOADED;
-        } catch(IOException e) {
+        } catch (IOException e) {
             throw new InitException(e);
         }
     }
 
-    //instrumentation
+    // instrumentation
     protected String metadataToJSON() {
         return metaModels.toJSON();
     }
@@ -186,7 +220,8 @@ public enum Registry {
     /**
      * Returns a hash keyed off a column name.
      */
-    private Map<String, ColumnMetadata> fetchMetaParams(DatabaseMetaData databaseMetaData, String dbType, String table) throws SQLException {
+    private Map<String, ColumnMetadata> fetchMetaParams(DatabaseMetaData databaseMetaData, String dbType, String table)
+            throws SQLException {
 
         /*
          * Valid table name format: tablename or schemaname.tablename
@@ -215,14 +250,15 @@ public enum Registry {
 
         String catalog = databaseMetaData.getConnection().getCatalog();
 
-        if(dbType.equalsIgnoreCase("h2")){
+        if (dbType.equalsIgnoreCase("h2")) {
             // keep quoted table names as is, otherwise use uppercase
             if (!tableName.contains("\"")) {
                 tableName = tableName.toUpperCase();
-            } else if(tableName.startsWith("\"") && tableName.endsWith("\"")) {
+            } else if (tableName.startsWith("\"") && tableName.endsWith("\"")) {
                 tableName = tableName.substring(1, tableName.length() - 1);
             }
-        } else if(dbType.toLowerCase().contains("postgres") && tableName.startsWith("\"") && tableName.endsWith("\"")) {
+        } else if (dbType.toLowerCase().contains("postgres") && tableName.startsWith("\"")
+                && tableName.endsWith("\"")) {
             tableName = tableName.substring(1, tableName.length() - 1);
         }
 
@@ -230,36 +266,36 @@ public enum Registry {
         Map<String, ColumnMetadata> columns = getColumns(rs, dbType);
         rs.close();
 
-        //try upper case table name - Oracle uses upper case
+        // try upper case table name - Oracle uses upper case
         if (columns.isEmpty()) {
             rs = databaseMetaData.getColumns(null, schema, tableName.toUpperCase(), null);
             columns = getColumns(rs, dbType);
             rs.close();
         }
 
-        //if upper case not found, try lower case.
+        // if upper case not found, try lower case.
         if (columns.isEmpty()) {
             rs = databaseMetaData.getColumns(null, schema, tableName.toLowerCase(), null);
             columns = getColumns(rs, dbType);
             rs.close();
         }
 
-        if(columns.size() > 0){
+        if (columns.size() > 0) {
             LogFilter.log(LOGGER, LogLevel.INFO, "Fetched metadata for table: {}", table);
-        }
-        else{
-            LogFilter.log(LOGGER, LogLevel.WARNING, "Failed to retrieve metadata for table: '{}'."
-                    + " Are you sure this table exists? For some databases table names are case sensitive.",
+        } else {
+            LogFilter.log(LOGGER, LogLevel.WARNING,
+                    "Failed to retrieve metadata for table: '{}'."
+                            + " Are you sure this table exists? For some databases table names are case sensitive.",
                     table);
         }
         return columns;
     }
 
-
     /**
      *
      * @param modelClasses
-     * @param dbType this is a name of a DBMS as returned by JDBC driver, such as Oracle, MySQL, etc.
+     * @param dbType       this is a name of a DBMS as returned by JDBC driver, such
+     *                     as Oracle, MySQL, etc.
      */
     private void registerModels(String dbName, Set<Class<? extends Model>> modelClasses, String dbType) {
         for (Class<? extends Model> modelClass : modelClasses) {
@@ -271,14 +307,14 @@ public enum Registry {
 
     private void processOverrides(Set<Class<? extends Model>> models) {
 
-        for(Class<? extends Model> modelClass : models){
+        for (Class<? extends Model> modelClass : models) {
 
             BelongsTo belongsToAnnotation = modelClass.getAnnotation(BelongsTo.class);
             processOverridesBelongsTo(modelClass, belongsToAnnotation);
 
             BelongsToParents belongsToParentAnnotation = modelClass.getAnnotation(BelongsToParents.class);
-            if (belongsToParentAnnotation != null){
-                for (BelongsTo belongsTo : belongsToParentAnnotation.value()){
+            if (belongsToParentAnnotation != null) {
+                for (BelongsTo belongsTo : belongsToParentAnnotation.value()) {
                     processOverridesBelongsTo(modelClass, belongsTo);
                 }
             }
@@ -294,17 +330,17 @@ public enum Registry {
             }
 
             Many2Many many2manyAnnotation = modelClass.getAnnotation(Many2Many.class);
-            if(many2manyAnnotation != null){
+            if (many2manyAnnotation != null) {
                 processManyToManyOverrides(many2manyAnnotation, modelClass);
             }
 
             BelongsToPolymorphic belongsToPolymorphic = modelClass.getAnnotation(BelongsToPolymorphic.class);
-            if(belongsToPolymorphic != null){
+            if (belongsToPolymorphic != null) {
                 processPolymorphic(belongsToPolymorphic, modelClass);
             }
 
-            UnrelatedTo unrelatedTo = modelClass.getAnnotation(UnrelatedTo .class);
-            if(unrelatedTo != null){
+            UnrelatedTo unrelatedTo = modelClass.getAnnotation(UnrelatedTo.class);
+            if (unrelatedTo != null) {
                 processUnrelatedTo(unrelatedTo, modelClass);
             }
 
@@ -316,22 +352,22 @@ public enum Registry {
         for (Class<? extends Model> relatedClass : related) {
             MetaModel relatedMM = metaModels.getMetaModel(relatedClass);
             MetaModel thisMM = metaModels.getMetaModel(modelClass);
-            if(relatedMM != null){
+            if (relatedMM != null) {
                 Association association = relatedMM.getAssociationForTarget(modelClass);
                 relatedMM.removeAssociationForTarget(modelClass);
-                if(association != null){
+                if (association != null) {
                     LogFilter.log(LOGGER, LogLevel.INFO, "Removed association: " + association);
                 }
             }
             Association association = thisMM.getAssociationForTarget(relatedClass);
             thisMM.removeAssociationForTarget(relatedClass);
-            if(association != null){
+            if (association != null) {
                 LogFilter.log(LOGGER, LogLevel.INFO, "Removed association: " + association);
             }
         }
     }
 
-    private void processPolymorphic(BelongsToPolymorphic belongsToPolymorphic, Class<? extends Model> modelClass ) {
+    private void processPolymorphic(BelongsToPolymorphic belongsToPolymorphic, Class<? extends Model> modelClass) {
         Class<? extends Model>[] parentClasses = belongsToPolymorphic.parents();
         String[] typeLabels = belongsToPolymorphic.typeLabels();
 
@@ -344,18 +380,17 @@ public enum Registry {
 
             String typeLabel = typeLabels.length > 0 ? typeLabels[i] : parentClass.getName();
 
-            BelongsToPolymorphicAssociation belongsToPolymorphicAssociation =
-                    new BelongsToPolymorphicAssociation(modelClass, parentClass, typeLabel, parentClass.getName());
+            BelongsToPolymorphicAssociation belongsToPolymorphicAssociation = new BelongsToPolymorphicAssociation(
+                    modelClass, parentClass, typeLabel, parentClass.getName());
             metaModels.getMetaModel(modelClass).addAssociation(belongsToPolymorphicAssociation);
 
-
-            OneToManyPolymorphicAssociation oneToManyPolymorphicAssociation =
-                    new OneToManyPolymorphicAssociation(parentClass, modelClass, typeLabel);
+            OneToManyPolymorphicAssociation oneToManyPolymorphicAssociation = new OneToManyPolymorphicAssociation(
+                    parentClass, modelClass, typeLabel);
             metaModels.getMetaModel(parentClass).addAssociation(oneToManyPolymorphicAssociation);
         }
     }
 
-    private void processManyToManyOverrides(Many2Many many2manyAnnotation, Class<? extends Model> modelClass){
+    private void processManyToManyOverrides(Many2Many many2manyAnnotation, Class<? extends Model> modelClass) {
 
         Class<? extends Model> otherClass = many2manyAnnotation.other();
 
@@ -377,21 +412,25 @@ public enum Registry {
             throw new InitException("failed to determine PK name in many to many relationship", e);
         }
 
-        Association many2many1 = new Many2ManyAssociation(modelClass, otherClass, join, sourceFKName, targetFKName, otherPk);
+        Association many2many1 = new Many2ManyAssociation(modelClass, otherClass, join, sourceFKName, targetFKName,
+                otherPk);
         metaModels.getMetaModel(source).addAssociation(many2many1);
 
-        Association many2many2 = new Many2ManyAssociation(otherClass, modelClass, join, targetFKName, sourceFKName, thisPk);
+        Association many2many2 = new Many2ManyAssociation(otherClass, modelClass, join, targetFKName, sourceFKName,
+                thisPk);
         metaModels.getMetaModel(target).addAssociation(many2many2);
     }
 
     private void processOverridesBelongsTo(Class<? extends Model> modelClass, BelongsTo belongsToAnnotation) {
-        if(belongsToAnnotation != null){
+        if (belongsToAnnotation != null) {
             Class<? extends Model> parentClass = belongsToAnnotation.parent();
             String foreignKeyName = belongsToAnnotation.foreignKeyName();
 
             if (metaModels.getMetaModel(parentClass).hasAssociation(modelClass, OneToManyAssociation.class)) {
-                LogFilter.log(LOGGER, LogLevel.WARNING, "Redundant annotations used: @BelongsTo and @HasMany on a "
-                    + "relationship between Model {} and Model {}.", modelClass.getName(), parentClass.getName());
+                LogFilter.log(LOGGER, LogLevel.WARNING,
+                        "Redundant annotations used: @BelongsTo and @HasMany on a "
+                                + "relationship between Model {} and Model {}.",
+                        modelClass.getName(), parentClass.getName());
                 return;
             }
 
@@ -401,17 +440,18 @@ public enum Registry {
             metaModels.getMetaModel(parentClass).addAssociation(hasMany);
             metaModels.getMetaModel(modelClass).addAssociation(belongsTo);
         }
-	}
-
+    }
 
     private void processOverridesHasMany(Class<? extends Model> modelClass, HasMany hasManyAnnotation) {
-        if(hasManyAnnotation != null){
+        if (hasManyAnnotation != null) {
             Class<? extends Model> childClass = hasManyAnnotation.child();
             String foreignKeyName = hasManyAnnotation.foreignKeyName();
 
             if (metaModels.getMetaModel(childClass).hasAssociation(modelClass, OneToManyAssociation.class)) {
-                LogFilter.log(LOGGER, LogLevel.WARNING, "Redundant annotations used: @BelongsTo and @HasMany on a "
-                    + "relationship between Model {} and Model {}.", modelClass.getName(), childClass.getName());
+                LogFilter.log(LOGGER, LogLevel.WARNING,
+                        "Redundant annotations used: @BelongsTo and @HasMany on a "
+                                + "relationship between Model {} and Model {}.",
+                        modelClass.getName(), childClass.getName());
                 return;
             }
 
@@ -428,7 +468,8 @@ public enum Registry {
         while (rs.next()) {
             // skip h2 INFORMATION_SCHEMA table columns.
             if (!"h2".equalsIgnoreCase(dbType) || !"INFORMATION_SCHEMA".equals(rs.getString("TABLE_SCHEM"))) {
-                ColumnMetadata cm = new ColumnMetadata(rs.getString("COLUMN_NAME"), rs.getString("TYPE_NAME"), rs.getInt("COLUMN_SIZE"));
+                ColumnMetadata cm = new ColumnMetadata(rs.getString("COLUMN_NAME"), rs.getString("TYPE_NAME"),
+                        rs.getInt("COLUMN_SIZE"));
                 columns.put(cm.getColumnName(), cm);
             }
         }
@@ -446,20 +487,23 @@ public enum Registry {
             if (target != null && getMetaModel(target) != null && hasForeignKeys(potentialJoinTable, source, target)) {
                 Class<? extends Model> sourceModelClass = metaModels.getModelClass(source);
                 Class<? extends Model> targetModelClass = metaModels.getModelClass(target);
-                Association associationSource = new Many2ManyAssociation(sourceModelClass, targetModelClass, potentialJoinTable, getMetaModel(source).getFKName(), getMetaModel(target).getFKName());
+                Association associationSource = new Many2ManyAssociation(sourceModelClass, targetModelClass,
+                        potentialJoinTable, getMetaModel(source).getFKName(), getMetaModel(target).getFKName());
                 getMetaModel(source).addAssociation(associationSource);
             }
         }
     }
 
     /**
-     * Checks that the "join" table has foreign keys from "source" and "other" tables. Returns true
-     * if "join" table exists and contains foreign keys of "source" and "other" tables, false otherwise.
+     * Checks that the "join" table has foreign keys from "source" and "other"
+     * tables. Returns true if "join" table exists and contains foreign keys of
+     * "source" and "other" tables, false otherwise.
      *
      * @param join   - potential name of a join table.
      * @param source name of a "source" table
      * @param other  name of "other" table.
-     * @return true if "join" table exists and contains foreign keys of "source" and "other" tables, false otherwise.
+     * @return true if "join" table exists and contains foreign keys of "source" and
+     *         "other" tables, false otherwise.
      */
     private boolean hasForeignKeys(String join, String source, String other) {
         String sourceFKName = getMetaModel(source).getFKName();
@@ -467,7 +511,6 @@ public enum Registry {
         MetaModel joinMM = getMetaModel(join);
         return joinMM.hasAttribute(sourceFKName) && joinMM.hasAttribute(otherFKName);
     }
-
 
     /**
      * Discover many to many associations.
@@ -490,20 +533,19 @@ public enum Registry {
         }
     }
 
-
-
     /**
      * Returns model class for a table name, null if not found.
      *
-     * @param table table name
+     * @param table             table name
      * @param suppressException true to suppress exception
      * @return model class for a table name, null if not found.s
      */
     protected Class<? extends Model> getModelClass(String table, boolean suppressException) {
         Class<? extends Model> modelClass = metaModels.getModelClass(table);
-        if(modelClass == null && !suppressException){
-            throw new InitException("failed to locate meta model for: " + table + ", are you sure this is correct table name?");
-        }else{
+        if (modelClass == null && !suppressException) {
+            throw new InitException(
+                    "failed to locate meta model for: " + table + ", are you sure this is correct table name?");
+        } else {
             return modelClass;
         }
     }
@@ -513,16 +555,18 @@ public enum Registry {
         init(MetaModel.getDbName(modelClass));
         String tableName = metaModels.getTableName(modelClass);
         if (tableName == null) {
-            throw new DBException("failed to find metamodel for " + modelClass + ". Are you sure that a corresponding table  exists in DB?");
+            throw new DBException("failed to find metamodel for " + modelClass
+                    + ". Are you sure that a corresponding table  exists in DB?");
         }
         return tableName;
     }
 
     /**
-     * Returns edges for a join. An edge is a table in a many to many relationship that is not a join.
+     * Returns edges for a join. An edge is a table in a many to many relationship
+     * that is not a join.
      *
-     * We have to go through all the associations here because join tables, (even if the model exists) will not
-     * have associations to the edges.
+     * We have to go through all the associations here because join tables, (even if
+     * the model exists) will not have associations to the edges.
      *
      * @param join name of join table;
      * @return edges for a join
@@ -540,13 +584,13 @@ public enum Registry {
     }
 
     /**
-     * Used to override the default model file, activejdbc_models.properties.
-     * Please note: After initial registration of the model classes in ActiveJDBC this method
-     * will not function. That means in order to utilize this method, you must call it before
-     * doing any work with models.
+     * Used to override the default model file, activejdbc_models.properties. Please
+     * note: After initial registration of the model classes in ActiveJDBC this
+     * method will not function. That means in order to utilize this method, you
+     * must call it before doing any work with models.
      *
-     * Usage of this method is only advised if you know what you're doing, and understand the risks
-     * of improperly using the method.
+     * Usage of this method is only advised if you know what you're doing, and
+     * understand the risks of improperly using the method.
      *
      * @param modelFile The name of the file to use as your models properties file.
      */
